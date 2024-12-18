@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI()
 
@@ -17,8 +17,6 @@ class Config:
         self.VERIFY_TOKEN = os.getenv("INSTAGRAM_VERIFY_TOKEN")
         self.ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
         self.validate_config()
-        print (self.VERIFY_TOKEN)
-        print (self.ACCESS_TOKEN)
     
     def validate_config(self):
         if not self.VERIFY_TOKEN:
@@ -39,8 +37,35 @@ async def download_media(media_url: str) -> Optional[str]:
             return base64_content
         return None
 
+async def process_webhook_data(body: dict):
+    """Process webhook data regardless of endpoint"""
+    print(f"Processing webhook data: {json.dumps(body, indent=2)}")
+    
+    for entry in body.get('entry', []):
+        for messaging in entry.get('messaging', []):
+            sender_id = messaging.get('sender', {}).get('id')
+            recipient_id = messaging.get('recipient', {}).get('id')
+            timestamp = messaging.get('timestamp')
+            
+            message = messaging.get('message', {})
+            message_text = message.get('text', '')
+            
+            attachments = message.get('attachments', [])
+            for attachment in attachments:
+                content_type = attachment.get('type')
+                media_url = attachment.get('payload', {}).get('url')
+                
+                print(f"Content Type: {content_type}")
+                print(f"Message Text: {message_text}")
+                
+                if media_url:
+                    base64_content = await download_media(media_url)
+                    if base64_content:
+                        print(f"Media downloaded and converted to base64")
+
 @app.get("/")
 async def verify_webhook(request: Request):
+    """Handle GET requests for webhook verification"""
     params = dict(request.query_params)
     
     print("Received verification request with params:", params)
@@ -63,34 +88,13 @@ async def verify_webhook(request: Request):
     print("Verification failed!")
     return Response(status_code=403)
 
+@app.post("/")
 @app.post("/webhook")
 async def handle_webhook(request: Request):
+    """Handle POST requests at both root and /webhook endpoints"""
     try:
         body = await request.json()
-        print(f"Received webhook: {json.dumps(body, indent=2)}")
-        
-        for entry in body.get('entry', []):
-            for messaging in entry.get('messaging', []):
-                sender_id = messaging.get('sender', {}).get('id')
-                recipient_id = messaging.get('recipient', {}).get('id')
-                timestamp = messaging.get('timestamp')
-                
-                message = messaging.get('message', {})
-                message_text = message.get('text', '')
-                
-                attachments = message.get('attachments', [])
-                for attachment in attachments:
-                    content_type = attachment.get('type')
-                    media_url = attachment.get('payload', {}).get('url')
-                    
-                    print(f"Content Type: {content_type}")
-                    print(f"Message Text: {message_text}")
-                    
-                    if media_url:
-                        base64_content = await download_media(media_url)
-                        if base64_content:
-                            print(f"Media downloaded and converted to base64")
-                            
+        await process_webhook_data(body)
         return Response(status_code=200)
     
     except Exception as e:
