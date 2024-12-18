@@ -1,0 +1,22 @@
+# FastAPI and server
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+
+# HTTP client for making requests
+httpx==0.26.0
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Pydantic for data validation
+pydantic==2.6.1
+
+# Optional but recommended packages
+# For better performance
+ujson==5.9.0
+# For better CORS handling
+starlette==0.36.3
+# For better request parsing
+python-multipart==0.0.9
+# For production logging
+loguru==0.7.2
