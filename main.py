@@ -7,20 +7,24 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from pathlib import Path
-from openai import OpenAI  # Add OpenAI import
-from OpenAI import analyze_image, ImageAnalysisRequest, Outfits  # Import from your OpenAI.py
+from openai import OpenAI
+from OpenAI import analyze_image, ImageAnalysisRequest, Outfits
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv(override=True)
 
 app = FastAPI()
-client = OpenAI()  # Initialize OpenAI client
 
 class Config:
     def __init__(self):
         self.VERIFY_TOKEN = os.getenv("INSTAGRAM_VERIFY_TOKEN")
         self.ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")
-        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Add OpenAI API key
+        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         self.validate_config()
         self.initialize_openai()
     
@@ -34,54 +38,53 @@ class Config:
     
     def initialize_openai(self):
         """Initialize OpenAI client with API key"""
-        global client  # Make client available globally
+        global client
         client = OpenAI(api_key=self.OPENAI_API_KEY)
+        logger.info("OpenAI client initialized")
 
 config = Config()
 
-def get_base64_prefix(content_type: str) -> str:
-    """Get the appropriate base64 prefix based on content type"""
-    if content_type.startswith('image/'):
-        return f"data:{content_type};base64,"
-    elif content_type.startswith('video/'):
-        return f"data:{content_type};base64,"
-    return "data:application/octet-stream;base64,"
-
 async def download_media(media_url: str) -> Optional[str]:
     """Download media and convert to base64"""
-    async with httpx.AsyncClient() as client:
-        headers = {"Authorization": f"Bearer {config.ACCESS_TOKEN}"}
-        response = await client.get(media_url, headers=headers)
-        
-        if response.status_code == 200:
-            # Get content type and appropriate prefix
-            content_type = response.headers.get('content-type', 'application/octet-stream')
-            prefix = get_base64_prefix(content_type)
+    try:
+        async with httpx.AsyncClient() as client:
+            # Use Instagram access token for authentication
+            headers = {"Authorization": f"Bearer {config.ACCESS_TOKEN}"}
+            logger.info(f"Attempting to download media from: {media_url}")
             
-            # Convert to base64
-            media_content = response.content
-            base64_content = base64.b64encode(media_content).decode('utf-8')
+            response = await client.get(media_url, headers=headers, follow_redirects=True)
             
-            # Return complete string with prefix
-            return f"{prefix}{base64_content}"
+            if response.status_code == 200:
+                # Get content type and appropriate prefix
+                content_type = response.headers.get('content-type', 'application/octet-stream')
+                logger.info(f"Media downloaded successfully. Content type: {content_type}")
+                
+                # Convert to base64
+                media_content = response.content
+                base64_content = base64.b64encode(media_content).decode('utf-8')
+                return f"data:{content_type};base64,{base64_content}"
+            else:
+                logger.error(f"Failed to download media. Status code: {response.status_code}")
+                return None
+    except Exception as e:
+        logger.error(f"Error downloading media: {str(e)}")
         return None
 
 async def process_image_with_openai(base64_image: str, message_text: str) -> Optional[Outfits]:
     """Process image using OpenAI analysis"""
     try:
-        # Create analysis request
+        logger.info("Starting OpenAI image analysis")
         request = ImageAnalysisRequest(
             base64_image=base64_image,
-            text=message_text
+            text=message_text or "Analyze this outfit"
         )
         
-        # Call OpenAI analysis function
+        logger.info("Calling OpenAI analyze_image function")
         result = await analyze_image(request)
-        print(f"OpenAI Analysis Result: {result}")
+        logger.info(f"OpenAI analysis completed: {result}")
         return result
-    
     except Exception as e:
-        print(f"Error in OpenAI processing: {str(e)}")
+        logger.error(f"Error in OpenAI processing: {str(e)}")
         return None
 
 @app.get("/")
@@ -104,13 +107,14 @@ async def verify_webhook(request: Request):
     print("Verification failed!")
     return Response(status_code=403)
 
+
 @app.post("/")
 @app.post("/webhook")
 async def handle_webhook(request: Request):
     """Handle POST requests at both root and /webhook endpoints"""
     try:
         body = await request.json()
-        print(f"Received webhook: {json.dumps(body, indent=2)}")
+        logger.info(f"Received webhook: {json.dumps(body, indent=2)}")
         
         for entry in body.get('entry', []):
             for messaging in entry.get('messaging', []):
@@ -120,15 +124,15 @@ async def handle_webhook(request: Request):
                 attachments = message.get('attachments', [])
                 for attachment in attachments:
                     content_type = attachment.get('type')
-                    media_url = attachment.get('payload', {}).get('url')
+                    payload = attachment.get('payload', {})
+                    media_url = payload.get('url')
                     
-                    print(f"Content Type: {content_type}")
-                    print(f"Message Text: {message_text}")
+                    logger.info(f"Processing attachment - Type: {content_type}, URL: {media_url}")
                     
-                    if media_url and content_type == 'image':  # Only process images
+                    if media_url and content_type == 'share':  # Instagram sends images as 'share' type
                         base64_content = await download_media(media_url)
                         if base64_content:
-                            print("Media downloaded and converted to base64")
+                            logger.info("Media converted to base64 successfully")
                             
                             # Process image with OpenAI
                             analysis_result = await process_image_with_openai(
@@ -137,27 +141,26 @@ async def handle_webhook(request: Request):
                             )
                             
                             if analysis_result:
-                                # Here you can handle the analysis result
-                                # For example, send it back to the user via Instagram
-                                print("Analysis completed:", analysis_result)
-                                
-                                # Format response message
+                                logger.info("Analysis completed successfully")
                                 response_text = f"Analysis Results:\n"
                                 response_text += f"Response: {analysis_result.Response}\n\n"
                                 response_text += "Articles of Clothing:\n"
                                 for article in analysis_result.Article:
                                     response_text += f"- {article.Item}: {article.Search}\n"
                                 
+                                logger.info(f"Sending response: {response_text}")
                                 # Here you would add code to send response_text back to Instagram
-                                # This depends on your Instagram messaging API implementation
-                            
+                            else:
+                                logger.error("OpenAI analysis failed or returned no results")
+                        else:
+                            logger.error("Failed to download and convert media")
+        
         return Response(status_code=200)
-    
     except Exception as e:
-        print(f"Error processing webhook: {str(e)}")
+        logger.error(f"Error processing webhook: {str(e)}")
         return Response(status_code=500)
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Starting server with verify token: {config.VERIFY_TOKEN}")
+    logger.info(f"Starting server with verify token: {config.VERIFY_TOKEN}")
     uvicorn.run(app, host="0.0.0.0", port=8000)

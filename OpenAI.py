@@ -145,6 +145,7 @@ Response Guidelines:
 
 
 async def analyze_image(request: ImageAnalysisRequest):
+    print('start')
     """
     Analyze an image using OpenAI's API with structured data extraction.
     
@@ -190,7 +191,7 @@ async def analyze_image(request: ImageAnalysisRequest):
                 },
             })
 
-        response = client.beta.chat.completions.parse(
+        response = client.beta.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             response_format=Outfits,
