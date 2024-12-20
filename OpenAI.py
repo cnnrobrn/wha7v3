@@ -191,7 +191,7 @@ async def analyze_image(request: ImageAnalysisRequest):
                 },
             })
 
-        response = client.beta.chat.completions.create(
+        response = client.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=messages,
             response_format=Outfits,
